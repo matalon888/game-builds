@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Build ${{ matrix.repo.slug }}
         env:
           URL: ${{ matrix.repo.url }}
@@ -32,24 +32,32 @@ jobs:
         run: |
           set -u
           git clone -q --depth 1 -b "$BRANCH" "$URL" src && cd src
-          if [ -f pnpm-lock.yaml ]; then npx -y pnpm@9 install --no-frozen-lockfile || exit 1
-          elif [ -f yarn.lock ]; then npx -y yarn@1 install --ignore-engines || exit 1
-          else npm install --no-audit --no-fund --loglevel=error || exit 1; fi
+          if [ -f pnpm-lock.yaml ]; then npx -y pnpm@9 install --no-frozen-lockfile
+          elif [ -f yarn.lock ]; then npx -y yarn@1 install --ignore-engines
+          else npm install --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error --legacy-peer-deps; fi
           if grep -q '"vite"' package.json; then npx vite build --base=./ || npm run build
-          elif grep -q '"parcel' package.json && ! grep -q '"build"' package.json; then npx parcel build index.html --public-url ./ --dist-dir dist
-          else npm run build; fi
+          elif grep -q '"build"' package.json; then npm run build
+          elif grep -q '"parcel' package.json; then npx parcel build index.html --public-url ./ --dist-dir dist
+          else echo "no build script"; exit 1; fi
           OUT=""
           for d in dist build out public docs www; do
             if [ -f "$d/index.html" ] && [ -n "$(find "$d" -newer package.json -type f | head -1)" ]; then OUT="$d"; break; fi
           done
-          [ -z "$OUT" ] && for d in dist build out; do [ -f "$d/index.html" ] && OUT="$d" && break; done
-          [ -z "$OUT" ] && { echo "no build output with index.html"; exit 1; }
+          if [ -z "$OUT" ]; then for d in dist build out; do if [ -f "$d/index.html" ]; then OUT="$d"; break; fi; done; fi
+          if [ -z "$OUT" ] && [ -f index.html ]; then
+            # index.html at the root loading the freshly built bundle: ship the repo minus tooling
+            OUT=".__site"; mkdir "$OUT"
+            tar --exclude=./node_modules --exclude=./.git --exclude="./$OUT" -cf - . | tar -xf - -C "$OUT"
+          fi
+          if [ -z "$OUT" ]; then echo "RESULT: no build output with index.html"; exit 1; fi
           # root-absolute asset paths break when the game is served from a sub-folder
-          if grep -Eq '(src|href)="/[^/]' "$OUT/index.html"; then echo "absolute asset paths in $OUT/index.html"; exit 1; fi
-          SIZE=$(du -sm "$OUT" | cut -f1); [ "$SIZE" -gt 40 ] && { echo "too big: ${SIZE}MB"; exit 1; }
+          if grep -Eq '(src|href)="/[^/]' "$OUT/index.html"; then echo "RESULT: absolute asset paths in $OUT/index.html"; exit 1; fi
+          SIZE=$(du -sm "$OUT" | cut -f1)
+          if [ "$SIZE" -gt 40 ]; then echo "RESULT: too big ${SIZE}MB"; exit 1; fi
           mkdir -p ../artifact/__build && cp -R "$OUT"/. ../artifact/__build/
-          for f in LICENSE* LICENCE* COPYING* UNLICENSE* license* licence*; do [ -f "$f" ] && cp "$f" ../artifact/; done
+          for f in LICENSE* LICENCE* COPYING* UNLICENSE* license* licence*; do if [ -f "$f" ]; then cp "$f" ../artifact/; fi; done
           echo "{\"slug\":\"$SLUG\",\"out\":\"$OUT\",\"mb\":$SIZE}" > ../artifact/build.json
+          echo "RESULT: built from $OUT (${SIZE}MB)"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.repo.slug }}
