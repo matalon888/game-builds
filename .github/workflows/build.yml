@@ -33,10 +33,12 @@ jobs:
           set -u
           git clone -q --depth 1 -b "$BRANCH" "$URL" src && cd src
           if [ -f pnpm-lock.yaml ]; then npx -y pnpm@9 install --no-frozen-lockfile
+          elif [ -f .yarnrc.yml ]; then corepack enable && yarn install
           elif [ -f yarn.lock ]; then npx -y yarn@1 install --ignore-engines
           else npm install --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error --legacy-peer-deps; fi
           if grep -q '"vite"' package.json; then npx vite build --base=./ || npm run build
-          elif grep -q '"build"' package.json; then npm run build
+          elif grep -q '"build"' package.json; then npm run build || NODE_OPTIONS=--openssl-legacy-provider npm run build
+          elif [ -f gruntfile.js ] || [ -f Gruntfile.js ]; then npx -y grunt-cli@1 build || npx -y grunt-cli@1
           elif grep -q '"parcel' package.json; then npx parcel build index.html --public-url ./ --dist-dir dist
           else echo "no build script"; exit 1; fi
           OUT=""
